@@ -6,5 +6,8 @@
     "test": "node test.js",
     "build": "node test.js && node generate-pages.js",
     "pages": "node generate-pages.js"
+  },
+  "dependencies": {
+    "jszip": "3.10.1"
   }
 }

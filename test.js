@@ -5,6 +5,7 @@
  * 改进：对 .js/.json/.txt 等文本文件，下载后提取真实站点地址进行测试
  */
 const fs = require('fs');
+const { parseSpiderClasses, isSiteCompatible } = require('./spider-parser');
 
 const SOURCES = [
   'https://cdn.jsdelivr.net/gh/2hacc/TVBox@main/oktv.json',
@@ -325,16 +326,36 @@ async function main() {
 
   console.log(`\n合并完成: ${merged.sites.length} sites, ${merged.lives.length} lives, ${merged.parses.length} parses`);
 
-  // 测试 spider
-  console.log('\n测试 Spider...');
+  // 测试 spider 并解析类名
+  console.log('\n测试 Spider 并解析类名...');
   const spiders = [...new Set(configs.map(c => resolveSpider(c.spider || '', configSources[configs.indexOf(c)])).filter(Boolean))];
   const deadSpiders = new Set();
+  const spiderClassMap = new Map(); // spider -> class names[]
+
   for (const spider of spiders) {
     const url = spider.split(';')[0];
     const r = await testUrl(url);
     const status = r.ok ? '✓' : '✗';
     console.log(`  ${status} ${url.substring(url.lastIndexOf('/') + 1)} (${r.status}, ${r.latency}ms)`);
-    if (!r.ok) deadSpiders.add(spider);
+    if (!r.ok) {
+      deadSpiders.add(spider);
+    } else {
+      // 解析 spider 中的类名
+      const classes = await parseSpiderClasses(spider);
+      spiderClassMap.set(spider, classes);
+      console.log(`    → 解析到 ${classes.length} 个类: ${classes.slice(0, 5).join(', ')}${classes.length > 5 ? '...' : ''}`);
+    }
+  }
+
+  // 全局 spider 的类名
+  const globalSpiderClasses = spiderClassMap.get(SPIDER) || [];
+  console.log(`\n全局 Spider 类名 (${globalSpiderClasses.length} 个): ${globalSpiderClasses.slice(0, 10).join(', ')}${globalSpiderClasses.length > 10 ? '...' : ''}`);
+  // 合并所有可用 spider 的类名
+  const allAvailableClasses = new Set();
+  for (const [spider, classes] of spiderClassMap) {
+    if (!deadSpiders.has(spider)) {
+      classes.forEach(c => allAvailableClasses.add(c));
+    }
   }
 
   // 测试站点
@@ -413,6 +434,7 @@ async function main() {
 
   // 生成 alive.json - 只保留测试通过(ok)的站点
   console.log('\n生成 alive.json...');
+  let incompatibleCount = 0;
   const aliveSites = merged.sites.filter(site => {
     const key = site.key || site.name;
     const name = site.name || '';
@@ -421,6 +443,13 @@ async function main() {
     if (EXCLUDE_RE.test(key) || EXCLUDE_RE.test(name) || EXCLUDE_RE.test(site.api || '')) return false;
     // 排除 dead spider 的站点
     if (site.type === 3 && site._spider && deadSpiders.has(site._spider)) return false;
+    // 排除 spider 不兼容的 type:3 站点
+    if (site.type === 3 && site.api && allAvailableClasses.size > 0) {
+      if (!isSiteCompatible(site.api, [...allAvailableClasses])) {
+        incompatibleCount++;
+        return false;
+      }
+    }
     // 只保留测试结果为 ok 的站点
     const r = results[key];
     if (!r || r.status !== 'ok') return false;
@@ -453,12 +482,13 @@ async function main() {
   fs.writeFileSync('alive.json', JSON.stringify(output, null, 2));
   fs.writeFileSync('results.json', JSON.stringify({
     tested_at: new Date().toISOString(),
-    summary: { total: sites.length, tested, alive, resolved, skipped: sites.length - tested },
+    summary: { total: sites.length, tested, alive, resolved, skipped: sites.length - tested, incompatible: incompatibleCount },
     sites: results,
-    spiders: Object.fromEntries(spiders.map(s => [s, !deadSpiders.has(s)]))
+    spiders: Object.fromEntries(spiders.map(s => [s, { alive: !deadSpiders.has(s), classes: spiderClassMap.get(s) || [] }]))
   }, null, 2));
 
   console.log(`\n完成! alive.json: ${aliveSites.length} sites, ${aliveLives.length} lives, ${aliveParses.length} parses`);
+  if (incompatibleCount > 0) console.log(`  (${incompatibleCount} 个站点因 spider 不兼容被排除)`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
