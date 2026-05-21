@@ -1,0 +1,10 @@
+{
+  "name": "tvbox-alive",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node test.js",
+    "build": "node test.js && node generate-pages.js",
+    "pages": "node generate-pages.js"
+  }
+}
