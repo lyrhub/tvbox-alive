@@ -233,27 +233,28 @@ function convertTypeDescriptor(desc) {
 
 /**
  * 判断是否是系统/框架类（不是爬虫类）
+ * TVBox 爬虫类通常以 csp_ 开头，或者是大写驼峰命名
  */
 function isSystemClass(name) {
-  const systemPrefixes = [
+  // TVBox 爬虫类的常见模式 - 这些一定要保留
+  if (name.startsWith('csp_') || name.startsWith('Csp_')) return false;
+  if (name.startsWith('Spider')) return false;
+  
+  const systemExact = new Set([
     'R', 'BuildConfig', 'Manifest',
-    'Abstract', 'Base', 'Default',
     'Application', 'Activity', 'Service',
     'Provider', 'Receiver', 'Fragment',
-  ];
+  ]);
+  if (systemExact.has(name)) return true;
   
   const systemPatterns = [
-    /^[a-z]/, // 小写开头通常是包名残留
-    /^I[A-Z]/, // 接口
+    /^I[A-Z][a-z]/, // 接口如 IParser
     /Impl$/, // 实现类
-    /Helper$/, /Utils?$/, /Manager$/, /Factory$/,
     /Exception$/, /Error$/,
-    /Adapter$/, /Listener$/, /Callback$/,
     /^android/, /^java/, /^kotlin/, /^androidx/,
     /^com\.google/, /^org\.apache/,
   ];
   
-  if (systemPrefixes.includes(name)) return true;
   return systemPatterns.some(p => p.test(name));
 }
 
