@@ -1,6 +1,8 @@
 /**
  * TVBox 源测试脚本 - 在 GitHub Actions 中运行
  * 无子请求限制，无 KV 限制，可以全量测试
+ * 
+ * 改进：对 .js/.json/.txt 等文本文件，下载后提取真实站点地址进行测试
  */
 const fs = require('fs');
 
@@ -16,8 +18,14 @@ const SPIDER = 'https://cdn.jsdelivr.net/gh/2hacc/TVBox@main/jar/tvbox.txt;md5;2
 // 排除关键词
 const EXCLUDE_RE = /网盘|云盘|Ali|Quark|Thunder|PikPak|UCShare|Samba|115|Push|AList|WebDAV|MIPanSo|KkSs|PanS|YiSo|YpanSo|UuSs|xzso|盘搜|盘他|米盘|抠抠|夸搜|易搜|盘Se|夸克|阿里|PanWeb|Share|分享|云搜|紙條|纸条|Gitcafe|Dovx|Zhaozy|UpYun|弹幕|磁力|p2p/i;
 
+// 文本文件后缀 - 这些是规则/配置文件，不是真实站点
+const TEXT_FILE_RE = /\.(js|json|txt|py|jar|zip|md|html|css|xml|yaml|yml|conf|cfg|properties|toml)(\?.*)?$/i;
+
+// 代码托管平台域名 - 这些域名上的文件不需要测试连通性
+const CODE_HOST_RE = /^https?:\/\/(raw\.githubusercontent\.com|cdn\.jsdelivr\.net|github\.com|gitee\.com|raw\.gitee\.com|gist\.githubusercontent\.com|raw\.gitmirror\.com|ghproxy\.com|mirror\.ghproxy\.com|gh-proxy\.com|raw\.kkgithub\.com|fastly\.jsdelivr\.net|gcore\.jsdelivr\.net|testingcf\.jsdelivr\.net)/i;
+
 async function fetchSource(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'TVBox-Merger/1.0' } });
+  const res = await fetch(url, { headers: { 'User-Agent': 'TVBox-Alive/1.0' } });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   let text = await res.text();
   text = text.replace(/^\uFEFF/, '').replace(/^\s*\/\/.*$/gm, '').trim();
@@ -50,12 +58,92 @@ function extractSourceName(url) {
 
 function isUrl(str) { return str && (str.startsWith('http://') || str.startsWith('https://')); }
 
+/**
+ * 判断 URL 是否指向文本/代码文件（而非真实站点）
+ */
+function isTextFileUrl(url) {
+  if (!url) return false;
+  // 代码托管平台上的文件
+  if (CODE_HOST_RE.test(url)) return true;
+  // 文本文件后缀
+  const pathname = url.split('?')[0].split('#')[0];
+  if (TEXT_FILE_RE.test(pathname)) return true;
+  return false;
+}
+
+/**
+ * 从文本内容中提取真实站点地址
+ * 支持 JS 规则文件、JSON 配置文件等
+ */
+function extractHostFromContent(text) {
+  // 1. 匹配 host = "xxx" 或 host: "xxx" 模式（JS 规则文件）
+  const hostMatch = text.match(/host\s*[:=]\s*['"`]([^'"`\s]+)['"`]/);
+  if (hostMatch && hostMatch[1] && isUrl(hostMatch[1])) {
+    return hostMatch[1].replace(/\/+$/, '');
+  }
+
+  // 2. 匹配 url = "xxx" 或 url: "xxx"
+  const urlMatch = text.match(/(?:url|baseUrl|base_url|siteUrl|site_url|homeUrl|host_url)\s*[:=]\s*['"`]([^'"`\s]+)['"`]/);
+  if (urlMatch && urlMatch[1] && isUrl(urlMatch[1])) {
+    return urlMatch[1].replace(/\/+$/, '');
+  }
+
+  // 3. 匹配 JSON 中的 host/url 字段
+  try {
+    const json = JSON.parse(text);
+    if (json.host && isUrl(json.host)) return json.host.replace(/\/+$/, '');
+    if (json.url && isUrl(json.url)) return json.url.replace(/\/+$/, '');
+    if (json.baseUrl && isUrl(json.baseUrl)) return json.baseUrl.replace(/\/+$/, '');
+    if (json.siteUrl && isUrl(json.siteUrl)) return json.siteUrl.replace(/\/+$/, '');
+    // 如果是数组，取第一个有 host/url 的
+    if (Array.isArray(json)) {
+      for (const item of json) {
+        if (item && item.host && isUrl(item.host)) return item.host.replace(/\/+$/, '');
+        if (item && item.url && isUrl(item.url)) return item.url.replace(/\/+$/, '');
+      }
+    }
+  } catch (e) {}
+
+  // 4. 从内容中找第一个非代码托管的 http URL
+  const allUrls = text.match(/https?:\/\/[^\s'"`<>\]\)},]+/g);
+  if (allUrls) {
+    for (const u of allUrls) {
+      const cleaned = u.replace(/['"`;,\]\)]+$/, '').replace(/\/+$/, '');
+      if (!CODE_HOST_RE.test(cleaned) && !TEXT_FILE_RE.test(cleaned) && cleaned.length > 10) {
+        return cleaned;
+      }
+    }
+  }
+
+  return '';
+}
+
+/**
+ * 下载文本文件并提取真实站点地址
+ */
+async function fetchRealHost(textUrl) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(textUrl, { 
+      headers: { 'User-Agent': 'TVBox-Alive/1.0' }, 
+      signal: controller.signal 
+    });
+    clearTimeout(timer);
+    if (!res.ok) return '';
+    const text = await res.text();
+    return extractHostFromContent(text);
+  } catch (e) {
+    return '';
+  }
+}
+
 async function testUrl(url, timeout = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   const start = Date.now();
   try {
-    const res = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': 'TVBox-Merger/1.0' }, signal: controller.signal, redirect: 'follow' });
+    const res = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': 'TVBox-Alive/1.0' }, signal: controller.signal, redirect: 'follow' });
     clearTimeout(timer);
     return { ok: res.ok, status: res.status, latency: Date.now() - start };
   } catch (e) {
@@ -64,39 +152,70 @@ async function testUrl(url, timeout = 8000) {
   }
 }
 
-function extractTestUrl(site, baseUrl) {
-  // 跳过 drpy 引擎
-  if (site.api && isUrl(site.api) && !site.api.includes('drpy')) return site.api;
-  if (site.api && site.api.startsWith('./') && !site.api.includes('drpy') && baseUrl) {
+/**
+ * 从站点配置中提取初始测试 URL（可能是文本文件）
+ */
+function extractRawTestUrl(site, baseUrl) {
+  // api 字段
+  if (site.api && isUrl(site.api)) return site.api;
+  if (site.api && site.api.startsWith('./') && baseUrl) {
     const r = resolveUrl(site.api, baseUrl);
     if (r) return r;
   }
+
+  // ext 字符串
   if (site.ext && typeof site.ext === 'string') {
-    if (isUrl(site.ext)) return site.ext;
-    if (site.ext.startsWith('./') && baseUrl) return resolveUrl(site.ext.split('$')[0], baseUrl);
+    if (isUrl(site.ext)) return site.ext.split('\n')[0];
+    if (site.ext.startsWith('./') && baseUrl) return resolveUrl(site.ext.split('\n')[0], baseUrl);
     const m = site.ext.match(/https?:\/\/[^\s$]+/);
     if (m) return m[0].replace(/\$+$/, '').replace(/\/$/, '');
   }
+
+  // ext 对象
   if (site.ext && typeof site.ext === 'object') {
     if (site.ext.siteUrl && isUrl(site.ext.siteUrl)) return site.ext.siteUrl;
     if (Array.isArray(site.ext.site) && site.ext.site.length > 0 && isUrl(site.ext.site[0])) return site.ext.site[0];
     for (const val of Object.values(site.ext)) {
       if (typeof val === 'string' && isUrl(val)) return val;
-      if (Array.isArray(val) && val.length > 0 && isUrl(val[0])) return val[0];
+      if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'string' && isUrl(val[0])) return val[0];
     }
   }
+
   return '';
 }
 
-async function extractRuleHost(jsUrl) {
-  try {
-    const res = await fetch(jsUrl, { headers: { 'User-Agent': 'TVBox-Merger/1.0' } });
-    if (!res.ok) return '';
-    const text = await res.text();
-    const m = text.match(/host\s*[:=]\s*['"`]([^'"`]+)['"`]/);
-    if (m && m[1] && isUrl(m[1])) return m[1].replace(/\/+$/, '');
-  } catch (e) {}
-  return '';
+/**
+ * 获取站点的真实测试地址
+ * 如果原始 URL 是文本文件，则下载并提取真实 host
+ */
+async function getRealTestUrl(site, baseUrl) {
+  const rawUrl = extractRawTestUrl(site, baseUrl);
+  if (!rawUrl) return { url: '', source: 'none', resolved: false };
+
+  // 如果不是文本文件 URL，直接用
+  if (!isTextFileUrl(rawUrl)) {
+    return { url: rawUrl, source: 'direct', resolved: false };
+  }
+
+  // 是文本文件，下载并提取真实地址
+  const realHost = await fetchRealHost(rawUrl);
+  if (realHost && !isTextFileUrl(realHost)) {
+    return { url: realHost, source: 'extracted', resolved: true, from: rawUrl };
+  }
+
+  // 提取失败，但如果 ext 中有 siteUrl 或 site 数组中有非文本 URL，用那个
+  if (site.ext && typeof site.ext === 'object') {
+    if (site.ext.siteUrl && isUrl(site.ext.siteUrl) && !isTextFileUrl(site.ext.siteUrl)) {
+      return { url: site.ext.siteUrl, source: 'ext.siteUrl', resolved: false };
+    }
+    if (Array.isArray(site.ext.site)) {
+      const realSite = site.ext.site.find(u => isUrl(u) && !isTextFileUrl(u));
+      if (realSite) return { url: realSite, source: 'ext.site[]', resolved: false };
+    }
+  }
+
+  // 实在找不到真实地址，跳过（不测试文本文件本身）
+  return { url: '', source: 'text_file_no_host', resolved: false, from: rawUrl };
 }
 
 async function main() {
@@ -162,36 +281,56 @@ async function main() {
   // 测试站点
   console.log(`\n测试站点 (${merged.sites.length} 个)...`);
   const results = {};
-  let tested = 0, alive = 0;
+  let tested = 0, alive = 0, resolved = 0;
 
-  for (const site of merged.sites) {
-    const key = site.key || site.name;
-    let testUrlStr = extractTestUrl(site, site._baseUrl);
+  // 并发控制：每批 10 个
+  const CONCURRENCY = 10;
+  const sites = merged.sites;
 
-    // drpy 类站点尝试提取 rule host
-    if (!testUrlStr && site.api && site.api.includes('drpy') && site.ext) {
-      let jsUrl = '';
-      if (typeof site.ext === 'string') {
-        if (isUrl(site.ext)) jsUrl = site.ext.split('$')[0];
-        else if (site.ext.startsWith('./')) jsUrl = resolveUrl(site.ext.split('$')[0], site._baseUrl);
+  for (let i = 0; i < sites.length; i += CONCURRENCY) {
+    const batch = sites.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.allSettled(batch.map(async (site) => {
+      const key = site.key || site.name;
+      const { url: testUrlStr, source, resolved: wasResolved, from } = await getRealTestUrl(site, site._baseUrl);
+
+      if (!testUrlStr) {
+        return { key, result: { status: 'skip', reason: source, from } };
       }
-      if (jsUrl && jsUrl.endsWith('.js')) {
-        testUrlStr = await extractRuleHost(jsUrl);
+
+      const r = await testUrl(testUrlStr);
+      return {
+        key,
+        result: {
+          status: r.ok ? 'ok' : 'fail',
+          http: r.status,
+          latency: r.latency,
+          url: testUrlStr,
+          source,
+          resolved: wasResolved,
+          from: wasResolved ? from : undefined,
+          error: r.error
+        }
+      };
+    }));
+
+    for (const br of batchResults) {
+      if (br.status === 'fulfilled') {
+        const { key, result } = br.value;
+        results[key] = result;
+        if (result.status !== 'skip') tested++;
+        if (result.status === 'ok') alive++;
+        if (result.resolved) resolved++;
       }
     }
 
-    if (!testUrlStr) {
-      results[key] = { status: 'skip' };
-      continue;
+    // 进度
+    const progress = Math.min(i + CONCURRENCY, sites.length);
+    if (progress % 50 === 0 || progress === sites.length) {
+      console.log(`  进度: ${progress}/${sites.length} (存活: ${alive}/${tested}, 解析host: ${resolved})`);
     }
-
-    const r = await testUrl(testUrlStr);
-    tested++;
-    if (r.ok) alive++;
-    results[key] = { status: r.ok ? 'ok' : 'fail', http: r.status, latency: r.latency, url: testUrlStr, error: r.error };
   }
 
-  console.log(`  测试完成: ${tested} 测试, ${alive} 存活`);
+  console.log(`  测试完成: ${tested} 测试, ${alive} 存活, ${resolved} 个从文件中提取了真实地址`);
 
   // 测试 lives
   console.log('\n测试直播源...');
@@ -253,7 +392,12 @@ async function main() {
   const output = { spider: SPIDER, sites: aliveSites, lives: aliveLives, parses: aliveParses };
 
   fs.writeFileSync('alive.json', JSON.stringify(output, null, 2));
-  fs.writeFileSync('results.json', JSON.stringify({ tested_at: new Date().toISOString(), sites: results, spiders: Object.fromEntries(spiders.map(s => [s, !deadSpiders.has(s)])) }, null, 2));
+  fs.writeFileSync('results.json', JSON.stringify({
+    tested_at: new Date().toISOString(),
+    summary: { total: sites.length, tested, alive, resolved, skipped: sites.length - tested },
+    sites: results,
+    spiders: Object.fromEntries(spiders.map(s => [s, !deadSpiders.has(s)]))
+  }, null, 2));
 
   console.log(`\n完成! alive.json: ${aliveSites.length} sites, ${aliveLives.length} lives, ${aliveParses.length} parses`);
 }
