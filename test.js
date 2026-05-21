@@ -411,7 +411,7 @@ async function main() {
     console.log(`  ${r.ok ? '✓' : '✗'} ${parse.name} (${r.status})`);
   }
 
-  // 生成 alive.json
+  // 生成 alive.json - 只保留测试通过(ok)的站点
   console.log('\n生成 alive.json...');
   const aliveSites = merged.sites.filter(site => {
     const key = site.key || site.name;
@@ -421,9 +421,9 @@ async function main() {
     if (EXCLUDE_RE.test(key) || EXCLUDE_RE.test(name) || EXCLUDE_RE.test(site.api || '')) return false;
     // 排除 dead spider 的站点
     if (site.type === 3 && site._spider && deadSpiders.has(site._spider)) return false;
-    // 排除测试失败的
+    // 只保留测试结果为 ok 的站点
     const r = results[key];
-    if (r && r.status === 'fail') return false;
+    if (!r || r.status !== 'ok') return false;
 
     return true;
   }).map(site => {
