@@ -546,6 +546,11 @@ async function main() {
     tested_at: new Date().toISOString(),
     summary: { total: sites.length, tested, alive, resolved, skipped: sites.length - tested, incompatible: incompatibleCount },
     sites: results,
+    lives: Object.entries(liveResults).map(([k, ok]) => {
+      const [name, url] = k.split('|');
+      return { name, url, ok };
+    }),
+    parses: Object.entries(parseResults).map(([k, ok]) => ({ name: k, ok })),
     spiders: Object.fromEntries(spiders.map(s => [s, { alive: !deadSpiders.has(s), classes: spiderClassMap.get(s) || [] }]))
   }, null, 2));
 

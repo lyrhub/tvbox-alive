@@ -43,11 +43,34 @@ function generateStatusPage() {
   const aliveParses = aliveData?.parses?.length || 0;
 
   // Spider 状态
-  const spiderRows = Object.entries(spiders).map(([url, alive]) => {
+  const spiderRows = Object.entries(spiders).map(([url, info]) => {
     const name = url.split('/').pop().split(';')[0];
-    const dot = alive ? 'dot-ok' : 'dot-fail';
-    const status = alive ? '<span style="color:#3fb950">可用</span>' : '<span style="color:#f85149">不可用</span>';
+    const isAlive = typeof info === 'object' ? info.alive : info;
+    const classCount = typeof info === 'object' ? (info.classes || []).length : 0;
+    const dot = isAlive ? 'dot-ok' : 'dot-fail';
+    const status = isAlive
+      ? `<span style="color:#3fb950">可用${classCount ? ' (' + classCount + '类)' : ''}</span>`
+      : '<span style="color:#f85149">不可用</span>';
     return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">🕷 ${name}</td><td>Jar</td><td class="api-url" title="${url.split(';')[0]}">${url.split(';')[0]}</td><td>--</td><td>${status}</td></tr>`;
+  }).join('');
+
+  // 直播源状态
+  const lives = aliveData?.lives || [];
+  const allLives = resultsData?.lives || [];
+  const liveRows = allLives.map(l => {
+    const name = l.name || '未知';
+    const url = l.url || '';
+    const dot = l.ok ? 'dot-ok' : 'dot-fail';
+    const note = l.ok ? '<span style="color:#3fb950">可用</span>' : `<span class="error-text">不可用</span>`;
+    return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">📺 ${name}</td><td class="api-url" title="${url}">${url || '--'}</td><td>${note}</td></tr>`;
+  }).join('');
+
+  // 解析接口状态
+  const parses = aliveData?.parses || [];
+  const parseRows = parses.map(p => {
+    const name = p.name || p.url || '未知';
+    const url = p.url || '';
+    return `<tr><td><span class="dot dot-ok"></span></td><td class="site-name">🔗 ${name}</td><td class="api-url" title="${url}">${url || '--'}</td><td><span style="color:#3fb950">可用</span></td></tr>`;
   }).join('');
 
   // 站点状态（按状态排序）
@@ -143,6 +166,12 @@ ${spiderRows ? `<h3 class="section-title">🕷 Spider 状态</h3>
 
 <h3 class="section-title">🔍 站点测试详情</h3>
 <table><thead><tr><th>状态</th><th>站点</th><th>类型</th><th>测试地址</th><th>延迟</th><th>备注</th></tr></thead><tbody>${siteRows}</tbody></table>
+
+${liveRows ? `<h3 class="section-title">📺 直播源 (${lives.length} 个存活)</h3>
+<table><thead><tr><th>状态</th><th>名称</th><th>地址</th><th>备注</th></tr></thead><tbody>${liveRows}</tbody></table>` : ''}
+
+${parseRows ? `<h3 class="section-title">🔗 解析接口 (${parses.length} 个存活)</h3>
+<table><thead><tr><th>状态</th><th>名称</th><th>地址</th><th>备注</th></tr></thead><tbody>${parseRows}</tbody></table>` : ''}
 
 <div class="footer">TVBox Alive | GitHub Pages | 自动更新</div>
 </div></body></html>`;
