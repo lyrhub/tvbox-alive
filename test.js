@@ -73,43 +73,72 @@ function isTextFileUrl(url) {
 
 /**
  * 从文本内容中提取真实站点地址
- * 支持 JS 规则文件、JSON 配置文件等
+ * 支持 JS 规则文件、JSON 配置文件、Python 爬虫等
  */
 function extractHostFromContent(text) {
-  // 1. 匹配 host = "xxx" 或 host: "xxx" 模式（JS 规则文件）
-  const hostMatch = text.match(/host\s*[:=]\s*['"`]([^'"`\s]+)['"`]/);
-  if (hostMatch && hostMatch[1] && isUrl(hostMatch[1])) {
-    return hostMatch[1].replace(/\/+$/, '');
+  // 1. 匹配 host = "xxx" 或 host: "xxx" 模式（drpy 规则文件最常见）
+  //    支持 var host = 'xxx', let host = 'xxx', const host = 'xxx', host = 'xxx'
+  const hostPatterns = [
+    /(?:var|let|const|)\s*host\s*[:=]\s*['"`]([^'"`\s]+)['"`]/,
+    /['"]host['"]\s*[:=]\s*['"`]([^'"`\s]+)['"`]/,
+    /this\.host\s*=\s*['"`]([^'"`\s]+)['"`]/,
+  ];
+  for (const pattern of hostPatterns) {
+    const m = text.match(pattern);
+    if (m && m[1] && isUrl(m[1])) {
+      return m[1].replace(/\/+$/, '');
+    }
   }
 
-  // 2. 匹配 url = "xxx" 或 url: "xxx"
-  const urlMatch = text.match(/(?:url|baseUrl|base_url|siteUrl|site_url|homeUrl|host_url)\s*[:=]\s*['"`]([^'"`\s]+)['"`]/);
-  if (urlMatch && urlMatch[1] && isUrl(urlMatch[1])) {
-    return urlMatch[1].replace(/\/+$/, '');
+  // 2. 匹配 homeUrl / siteUrl / baseUrl 等
+  const urlPatterns = [
+    /(?:var|let|const|)\s*(?:homeUrl|siteUrl|baseUrl|base_url|site_url|host_url|url)\s*[:=]\s*['"`]([^'"`\s]+)['"`]/,
+    /['"](?:homeUrl|siteUrl|baseUrl|url)['"]\s*[:=]\s*['"`]([^'"`\s]+)['"`]/,
+  ];
+  for (const pattern of urlPatterns) {
+    const m = text.match(pattern);
+    if (m && m[1] && isUrl(m[1]) && !CODE_HOST_RE.test(m[1])) {
+      return m[1].replace(/\/+$/, '');
+    }
   }
 
-  // 3. 匹配 JSON 中的 host/url 字段
+  // 3. Python 爬虫: host = "xxx"
+  const pyHost = text.match(/host\s*=\s*['"]([^'"]+)['"]/);
+  if (pyHost && pyHost[1] && isUrl(pyHost[1])) {
+    return pyHost[1].replace(/\/+$/, '');
+  }
+
+  // 4. 匹配 JSON 中的 host/url 字段
   try {
     const json = JSON.parse(text);
     if (json.host && isUrl(json.host)) return json.host.replace(/\/+$/, '');
-    if (json.url && isUrl(json.url)) return json.url.replace(/\/+$/, '');
-    if (json.baseUrl && isUrl(json.baseUrl)) return json.baseUrl.replace(/\/+$/, '');
+    if (json.url && isUrl(json.url) && !CODE_HOST_RE.test(json.url)) return json.url.replace(/\/+$/, '');
+    if (json.baseUrl && isUrl(json.baseUrl) && !CODE_HOST_RE.test(json.baseUrl)) return json.baseUrl.replace(/\/+$/, '');
     if (json.siteUrl && isUrl(json.siteUrl)) return json.siteUrl.replace(/\/+$/, '');
+    if (json.homeUrl && isUrl(json.homeUrl)) return json.homeUrl.replace(/\/+$/, '');
     // 如果是数组，取第一个有 host/url 的
     if (Array.isArray(json)) {
       for (const item of json) {
         if (item && item.host && isUrl(item.host)) return item.host.replace(/\/+$/, '');
-        if (item && item.url && isUrl(item.url)) return item.url.replace(/\/+$/, '');
+        if (item && item.url && isUrl(item.url) && !CODE_HOST_RE.test(item.url)) return item.url.replace(/\/+$/, '');
       }
     }
   } catch (e) {}
 
-  // 4. 从内容中找第一个非代码托管的 http URL
-  const allUrls = text.match(/https?:\/\/[^\s'"`<>\]\)},]+/g);
+  // 5. 从内容中找第一个非代码托管的 http URL（作为最后手段）
+  const allUrls = text.match(/https?:\/\/[^\s'"`<>\]\)},\\]+/g);
   if (allUrls) {
     for (const u of allUrls) {
       const cleaned = u.replace(/['"`;,\]\)]+$/, '').replace(/\/+$/, '');
       if (!CODE_HOST_RE.test(cleaned) && !TEXT_FILE_RE.test(cleaned) && cleaned.length > 10) {
+        // 尝试只取域名部分（避免带路径模板的 URL）
+        try {
+          const parsed = new URL(cleaned);
+          const base = parsed.origin;
+          // 如果路径中有模板变量如 {cateId}，只用域名
+          if (cleaned.includes('{') || cleaned.includes('$')) return base;
+          return cleaned;
+        } catch (e) {}
         return cleaned;
       }
     }
@@ -153,25 +182,55 @@ async function testUrl(url, timeout = 8000) {
 }
 
 /**
+ * 判断 URL 是否是 drpy 引擎文件（不应从中提取 host）
+ */
+function isDrpyEngine(url) {
+  if (!url) return false;
+  return /drpy\d?\.min\.js|drpy\d?\.js|lib\/drpy/i.test(url);
+}
+
+/**
  * 从站点配置中提取初始测试 URL（可能是文本文件）
+ * 对 drpy 类站点，优先从 ext（规则文件）中提取，而非 api（引擎文件）
  */
 function extractRawTestUrl(site, baseUrl) {
-  // api 字段
-  if (site.api && isUrl(site.api)) return site.api;
-  if (site.api && site.api.startsWith('./') && baseUrl) {
-    const r = resolveUrl(site.api, baseUrl);
+  const api = site.api || '';
+  const isDrpy = isDrpyEngine(api) || api.includes('drpy');
+
+  // 对 drpy 类站点，优先用 ext（规则 js 文件）
+  if (isDrpy) {
+    const extUrl = getExtUrl(site, baseUrl);
+    if (extUrl) return extUrl;
+    // drpy 引擎文件本身不作为测试目标
+    return '';
+  }
+
+  // 非 drpy 站点：api 字段
+  if (api && isUrl(api)) return api;
+  if (api && api.startsWith('./') && baseUrl) {
+    const r = resolveUrl(api, baseUrl);
     if (r) return r;
   }
 
-  // ext 字符串
+  // ext
+  const extUrl = getExtUrl(site, baseUrl);
+  if (extUrl) return extUrl;
+
+  return '';
+}
+
+/**
+ * 从 ext 字段提取 URL
+ */
+function getExtUrl(site, baseUrl) {
   if (site.ext && typeof site.ext === 'string') {
-    if (isUrl(site.ext)) return site.ext.split('\n')[0];
-    if (site.ext.startsWith('./') && baseUrl) return resolveUrl(site.ext.split('\n')[0], baseUrl);
+    const first = site.ext.split('\n')[0].trim();
+    if (isUrl(first)) return first;
+    if (first.startsWith('./') && baseUrl) return resolveUrl(first, baseUrl);
     const m = site.ext.match(/https?:\/\/[^\s$]+/);
     if (m) return m[0].replace(/\$+$/, '').replace(/\/$/, '');
   }
 
-  // ext 对象
   if (site.ext && typeof site.ext === 'object') {
     if (site.ext.siteUrl && isUrl(site.ext.siteUrl)) return site.ext.siteUrl;
     if (Array.isArray(site.ext.site) && site.ext.site.length > 0 && isUrl(site.ext.site[0])) return site.ext.site[0];
