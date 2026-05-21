@@ -183,6 +183,51 @@ async function testUrl(url, timeout = 8000) {
 }
 
 /**
+ * 测试直播源 URL - 下载内容并验证是否包含有效频道
+ */
+async function testLiveUrl(url, timeout = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  const start = Date.now();
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'TVBox-Alive/1.0' }, signal: controller.signal, redirect: 'follow' });
+    clearTimeout(timer);
+    if (!res.ok) return { ok: false, status: res.status, latency: Date.now() - start };
+
+    const text = await res.text();
+    const latency = Date.now() - start;
+
+    // 验证内容是否是有效的直播源格式
+    // 支持的格式：
+    // 1. m3u/m3u8: 以 #EXTM3U 开头
+    // 2. txt 格式: "频道名,URL" 或 "分组,#genre#\n频道名,URL"
+    // 3. 纯 URL 列表
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    
+    if (lines.length === 0) return { ok: false, status: res.status, latency, error: '空文件' };
+
+    let channels = 0;
+    const isM3u = lines[0].trim().startsWith('#EXTM3U');
+    
+    if (isM3u) {
+      // m3u 格式：统计 #EXTINF 行数
+      channels = lines.filter(l => l.trim().startsWith('#EXTINF')).length;
+    } else {
+      // txt 格式：统计包含 http 的行数（频道链接）
+      channels = lines.filter(l => /https?:\/\//.test(l)).length;
+    }
+
+    // 至少要有 1 个频道才算有效
+    if (channels === 0) return { ok: false, status: res.status, latency, error: '无有效频道' };
+
+    return { ok: true, status: res.status, latency, channels };
+  } catch (e) {
+    clearTimeout(timer);
+    return { ok: false, status: 0, latency: Date.now() - start, error: e.name === 'AbortError' ? 'timeout' : e.message };
+  }
+}
+
+/**
  * 判断 URL 是否是 drpy 引擎文件（不应从中提取 host）
  */
 function isDrpyEngine(url) {
@@ -313,7 +358,7 @@ async function main() {
     if (Array.isArray(config.lives)) {
       for (const live of config.lives) {
         const k = `${live.name}|${live.url}`;
-        if (!seenLives.has(k)) { seenLives.add(k); merged.lives.push(live); }
+        if (!seenLives.has(k)) { seenLives.add(k); merged.lives.push({ ...live, _baseUrl: baseUrl }); }
       }
     }
     if (Array.isArray(config.parses)) {
@@ -412,14 +457,24 @@ async function main() {
 
   console.log(`  测试完成: ${tested} 测试, ${alive} 存活, ${resolved} 个从文件中提取了真实地址`);
 
-  // 测试 lives
+  // 测试 lives（直播源）
   console.log('\n测试直播源...');
   const liveResults = {};
   for (const live of merged.lives) {
-    if (!live.url || !isUrl(live.url)) continue;
-    const r = await testUrl(live.url);
+    let liveUrl = live.url || '';
+    // 解析相对路径
+    if (liveUrl.startsWith('./') && live._baseUrl) {
+      liveUrl = resolveUrl(liveUrl, live._baseUrl);
+    }
+    if (!isUrl(liveUrl)) {
+      liveResults[`${live.name}|${live.url}`] = false;
+      console.log(`  ✗ ${live.name} (无效URL: ${live.url})`);
+      continue;
+    }
+    // 用 GET 请求验证内容（直播源文件通常很小）
+    const r = await testLiveUrl(liveUrl);
     liveResults[`${live.name}|${live.url}`] = r.ok;
-    console.log(`  ${r.ok ? '✓' : '✗'} ${live.name} (${r.status})`);
+    console.log(`  ${r.ok ? '✓' : '✗'} ${live.name} (${r.status}${r.channels ? ', ' + r.channels + '频道' : ''})`);
   }
 
   // 测试 parses
@@ -468,13 +523,20 @@ async function main() {
   const aliveLives = merged.lives.filter(l => {
     const k = `${l.name}|${l.url}`;
     if (liveResults.hasOwnProperty(k)) return liveResults[k];
-    return true;
+    return false; // 未测试的也排除
+  }).map(l => {
+    const { _baseUrl, ...clean } = l;
+    // 转换相对路径
+    if (_baseUrl && clean.url && clean.url.startsWith('./')) {
+      clean.url = resolveUrl(clean.url, _baseUrl);
+    }
+    return clean;
   });
 
   const aliveParses = merged.parses.filter(p => {
     const k = p.name || p.url;
     if (parseResults.hasOwnProperty(k)) return parseResults[k];
-    return true;
+    return false; // 未测试的也排除
   });
 
   const output = { spider: SPIDER, sites: aliveSites, lives: aliveLives, parses: aliveParses };
