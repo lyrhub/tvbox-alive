@@ -260,24 +260,40 @@ function isSystemClass(name) {
 
 /**
  * 判断站点的 api 字段是否在 spider 的类名列表中
- * @param {string} siteApi - 站点的 api 字段，如 "csp_Bilibili"
+ * @param {string} siteApi - 站点的 api 字段，如 "csp_Bilibili" 或 "Bili"
  * @param {string[]} spiderClasses - spider 中的类名列表
  * @returns {boolean}
  */
 function isSiteCompatible(siteApi, spiderClasses) {
   if (!siteApi || !spiderClasses || spiderClasses.length === 0) return true; // 无法判断时默认兼容
   
-  // api 字段可能是完整类名或简短名
-  // 如 "csp_Bilibili", "CatVodSpider", "com.github.catvod.spider.Bilibili"
-  const apiName = siteApi.split('.').pop(); // 取最后一段
+  // 非 csp_ 开头的 api 通常不是 spider 类引用（可能是内置引擎如 "drpy2"）
+  // 这些不需要检查兼容性
+  if (!siteApi.startsWith('csp_') && !siteApi.startsWith('Csp') && !siteApi.includes('.')) {
+    return true;
+  }
   
   // 精确匹配
-  if (spiderClasses.includes(apiName)) return true;
   if (spiderClasses.includes(siteApi)) return true;
   
-  // 模糊匹配（忽略大小写）
-  const lower = apiName.toLowerCase();
-  return spiderClasses.some(c => c.toLowerCase() === lower);
+  // csp_Xxx → Xxx 匹配
+  let shortName = siteApi;
+  if (shortName.startsWith('csp_')) shortName = shortName.substring(4);
+  if (shortName.startsWith('Csp_')) shortName = shortName.substring(4);
+  
+  if (spiderClasses.includes(shortName)) return true;
+  
+  // 完整类名匹配: com.github.catvod.spider.Xxx → Xxx
+  const lastPart = siteApi.split('.').pop();
+  if (lastPart !== siteApi && spiderClasses.includes(lastPart)) return true;
+  
+  // 忽略大小写匹配
+  const lowerShort = shortName.toLowerCase();
+  const lowerApi = siteApi.toLowerCase();
+  return spiderClasses.some(c => {
+    const lc = c.toLowerCase();
+    return lc === lowerShort || lc === lowerApi || lc === lastPart.toLowerCase();
+  });
 }
 
 module.exports = { parseSpiderClasses, isSiteCompatible, parseDexClasses, parseJarFile };
