@@ -2,8 +2,8 @@ name: TVBox Alive Test & Deploy
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # æ¯6å°æ—¶è¿è¡Œä¸€æ¬¡
-  workflow_dispatch:  # æ‰‹åŠ¨è§¦å‘
+    - cron: '0 */6 * * *'  # 每6小时运行一次
+  workflow_dispatch:  # 手动触发
   push:
     branches: [main]
 
