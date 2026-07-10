@@ -509,6 +509,9 @@ async function main() {
     const r = results[key];
     if (!r || r.status !== 'ok') return false;
 
+    // 只保留可搜索的站点（searchable 不为 0）
+    if (site.searchable === 0) return false;
+
     return true;
   }).map(site => {
     const { _baseUrl, _spider, _source, ...clean } = site;
