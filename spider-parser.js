@@ -28,7 +28,7 @@ async function parseSpiderClasses(spiderUrl) {
     
     if (!res.ok) {
       console.log(`  Spider 下载失败: HTTP ${res.status}`);
-      return { classes: [], downloadInfo: null };
+      return { classes: [], downloadInfo: null, buffer: null };
     }
     
     const buffer = await res.arrayBuffer();
@@ -39,26 +39,26 @@ async function parseSpiderClasses(spiderUrl) {
     
     const bytes = new Uint8Array(buffer);
     
-    if (bytes.length < 8) return { classes: [], downloadInfo };
+    if (bytes.length < 8) return { classes: [], downloadInfo, buffer };
     
     // 判断格式
     const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
     
     if (magic === 'PK\x03\x04' || magic === 'PK\x05\x06') {
       // ZIP/JAR 格式
-      return { classes: await parseJarFile(buffer), downloadInfo };
+      return { classes: await parseJarFile(buffer), downloadInfo, buffer };
     }
     
     if (magic.startsWith('dex\n')) {
       // 裸 DEX 格式
-      return { classes: parseDexClasses(bytes), downloadInfo };
+      return { classes: parseDexClasses(bytes), downloadInfo, buffer };
     }
     
     console.log(`  Spider 格式未知: magic=${magic.replace(/[^\x20-\x7e]/g, '?')}`);
-    return { classes: [], downloadInfo };
+    return { classes: [], downloadInfo, buffer };
   } catch (e) {
     console.log(`  Spider 解析失败: ${e.message}`);
-    return { classes: [], downloadInfo: null };
+    return { classes: [], downloadInfo: null, buffer: null };
   }
 }
 

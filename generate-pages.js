@@ -21,6 +21,12 @@ if (fs.existsSync('results.json')) {
   fs.copyFileSync('results.json', path.join(OUTPUT_DIR, 'results.json'));
 }
 
+// 复制 spider.jar
+if (fs.existsSync('spider.jar')) {
+  fs.copyFileSync('spider.jar', path.join(OUTPUT_DIR, 'spider.jar'));
+  console.log('  spider.jar → output/spider.jar');
+}
+
 // 读取数据生成页面
 let aliveData = null, resultsData = null;
 try { aliveData = JSON.parse(fs.readFileSync('alive.json', 'utf-8')); } catch (e) {}
@@ -48,12 +54,10 @@ function generateStatusPage() {
     const isAlive = typeof info === 'object' ? info.alive : info;
     const classCount = typeof info === 'object' ? (info.classes || []).length : 0;
     const dot = isAlive ? 'dot-ok' : 'dot-fail';
-    const dl = typeof info === 'object' && info.download ? info.download : null;
-    const speedHtml = dl ? `${(dl.fileSize / 1024 / 1024).toFixed(1)}MB ${dl.downloadTime}ms <b>${dl.speedKBs} KB/s</b>` : '--';
     const status = isAlive
       ? `<span style="color:#3fb950">可用${classCount ? ' (' + classCount + '类)' : ''}</span>`
       : '<span style="color:#f85149">不可用</span>';
-    return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">🕷 ${name}</td><td>Jar</td><td class="api-url" title="${url.split(';')[0]}">${url.split(';')[0]}</td><td>${speedHtml}</td><td>${status}</td></tr>`;
+    return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">🕷 ${name}</td><td>Jar</td><td class="api-url" title="${url.split(';')[0]}">${url.split(';')[0]}</td><td>--</td><td>${status}</td></tr>`;
   }).join('');
 
   // 直播源状态

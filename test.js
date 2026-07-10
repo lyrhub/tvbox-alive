@@ -371,30 +371,32 @@ async function main() {
 
   console.log(`\n合并完成: ${merged.sites.length} sites, ${merged.lives.length} lives, ${merged.parses.length} parses`);
 
-  // 测试 spider 并解析类名
-  console.log('\n测试 Spider 并解析类名...');
+  // 测试 Spider 并解析类名
+  console.log('\n测试 Spider 并下载...');
   const spiders = [...new Set(configs.map(c => resolveSpider(c.spider || '', configSources[configs.indexOf(c)])).filter(Boolean))];
   const deadSpiders = new Set();
   const spiderClassMap = new Map(); // spider -> class names[]
-  const spiderDownloadInfo = new Map(); // spider -> download speed info
+  let localSpiderFile = null; // 本地保存的 spider 文件名
 
   for (const spider of spiders) {
     const url = spider.split(';')[0];
-    const r = await testUrl(url);
-    const status = r.ok ? '✓' : '✗';
-    console.log(`  ${status} ${url.substring(url.lastIndexOf('/') + 1)} (${r.status}, ${r.latency}ms)`);
-    if (!r.ok) {
+    const { classes, downloadInfo, buffer } = await parseSpiderClasses(spider);
+    if (!downloadInfo) {
+      console.log(`  ✗ ${url.substring(url.lastIndexOf('/') + 1)} (下载失败)`);
       deadSpiders.add(spider);
     } else {
-      // 解析 spider 中的类名（同时测速）
-      const { classes, downloadInfo } = await parseSpiderClasses(spider);
-      spiderClassMap.set(spider, classes);
-      if (downloadInfo) {
-        spiderDownloadInfo.set(spider, downloadInfo);
-        const sizeMB = (downloadInfo.fileSize / 1024 / 1024).toFixed(2);
-        console.log(`    → 下载: ${sizeMB}MB, 耗时 ${downloadInfo.downloadTime}ms, 速度 ${downloadInfo.speedKBs} KB/s`);
-      }
+      const sizeMB = (downloadInfo.fileSize / 1024 / 1024).toFixed(2);
+      console.log(`  ✓ ${url.substring(url.lastIndexOf('/') + 1)} (${sizeMB}MB, ${downloadInfo.downloadTime}ms)`);
       console.log(`    → 解析到 ${classes.length} 个类: ${classes.slice(0, 5).join(', ')}${classes.length > 5 ? '...' : ''}`);
+      spiderClassMap.set(spider, classes);
+
+      // 保存类最多的 spider 到本地
+      if (!localSpiderFile || classes.length > (spiderClassMap.get(localSpiderFile.spider) || []).length) {
+        const fileName = 'spider.jar';
+        fs.writeFileSync(fileName, Buffer.from(buffer));
+        localSpiderFile = { fileName, spider };
+        console.log(`    → 已保存到本地: ${fileName}`);
+      }
     }
   }
 
@@ -548,20 +550,12 @@ async function main() {
     return false; // 未测试的也排除
   });
 
-  // 选择下载速度最快的 spider
-  let fastestSpider = SPIDER;
-  let fastestSpeed = 0;
-  for (const [spider, info] of spiderDownloadInfo) {
-    if (!deadSpiders.has(spider) && info.speedKBs > fastestSpeed) {
-      fastestSpeed = info.speedKBs;
-      fastestSpider = spider;
-    }
-  }
-  if (fastestSpider !== SPIDER) {
-    console.log(`  使用最快 Spider: ${fastestSpider.split('/').pop().split(';')[0]} (${fastestSpeed} KB/s)`);
-  }
+  // 选择本地 spider URL
+  const PAGES_BASE = 'https://tv.eoty.cn';
+  const spiderUrl = localSpiderFile ? `${PAGES_BASE}/${localSpiderFile.fileName}` : SPIDER;
+  console.log(`\n输出 Spider: ${spiderUrl}`);
 
-  const output = { spider: fastestSpider, sites: aliveSites, lives: aliveLives, parses: aliveParses };
+  const output = { spider: spiderUrl, sites: aliveSites, lives: aliveLives, parses: aliveParses };
 
   fs.writeFileSync('alive.json', JSON.stringify(output, null, 2));
   fs.writeFileSync('results.json', JSON.stringify({
@@ -573,7 +567,7 @@ async function main() {
       return { name, url, ok };
     }),
     parses: Object.entries(parseResults).map(([k, ok]) => ({ name: k, ok })),
-    spiders: Object.fromEntries(spiders.map(s => [s, { alive: !deadSpiders.has(s), classes: spiderClassMap.get(s) || [], download: spiderDownloadInfo.get(s) || null }]))
+    spiders: Object.fromEntries(spiders.map(s => [s, { alive: !deadSpiders.has(s), classes: spiderClassMap.get(s) || [] }]))
   }, null, 2));
 
   console.log(`\n完成! alive.json: ${aliveSites.length} sites, ${aliveLives.length} lives, ${aliveParses.length} parses`);
