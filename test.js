@@ -548,7 +548,20 @@ async function main() {
     return false; // 未测试的也排除
   });
 
-  const output = { spider: SPIDER, sites: aliveSites, lives: aliveLives, parses: aliveParses };
+  // 选择下载速度最快的 spider
+  let fastestSpider = SPIDER;
+  let fastestSpeed = 0;
+  for (const [spider, info] of spiderDownloadInfo) {
+    if (!deadSpiders.has(spider) && info.speedKBs > fastestSpeed) {
+      fastestSpeed = info.speedKBs;
+      fastestSpider = spider;
+    }
+  }
+  if (fastestSpider !== SPIDER) {
+    console.log(`  使用最快 Spider: ${fastestSpider.split('/').pop().split(';')[0]} (${fastestSpeed} KB/s)`);
+  }
+
+  const output = { spider: fastestSpider, sites: aliveSites, lives: aliveLives, parses: aliveParses };
 
   fs.writeFileSync('alive.json', JSON.stringify(output, null, 2));
   fs.writeFileSync('results.json', JSON.stringify({
