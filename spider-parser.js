@@ -19,6 +19,7 @@ async function parseSpiderClasses(spiderUrl) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
+    const startTime = Date.now();
     const res = await fetch(url, {
       headers: { 'User-Agent': 'TVBox-Alive/1.0' },
       signal: controller.signal
@@ -27,32 +28,37 @@ async function parseSpiderClasses(spiderUrl) {
     
     if (!res.ok) {
       console.log(`  Spider 下载失败: HTTP ${res.status}`);
-      return [];
+      return { classes: [], downloadInfo: null };
     }
     
     const buffer = await res.arrayBuffer();
+    const downloadTime = Date.now() - startTime;
+    const fileSize = buffer.byteLength;
+    const speedKBs = fileSize / 1024 / (downloadTime / 1000); // KB/s
+    const downloadInfo = { fileSize, downloadTime, speedKBs: Math.round(speedKBs) };
+    
     const bytes = new Uint8Array(buffer);
     
-    if (bytes.length < 8) return [];
+    if (bytes.length < 8) return { classes: [], downloadInfo };
     
     // 判断格式
     const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
     
     if (magic === 'PK\x03\x04' || magic === 'PK\x05\x06') {
       // ZIP/JAR 格式
-      return await parseJarFile(buffer);
+      return { classes: await parseJarFile(buffer), downloadInfo };
     }
     
     if (magic.startsWith('dex\n')) {
       // 裸 DEX 格式
-      return parseDexClasses(bytes);
+      return { classes: parseDexClasses(bytes), downloadInfo };
     }
     
     console.log(`  Spider 格式未知: magic=${magic.replace(/[^\x20-\x7e]/g, '?')}`);
-    return [];
+    return { classes: [], downloadInfo };
   } catch (e) {
     console.log(`  Spider 解析失败: ${e.message}`);
-    return [];
+    return { classes: [], downloadInfo: null };
   }
 }
 

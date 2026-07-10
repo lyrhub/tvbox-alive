@@ -376,6 +376,7 @@ async function main() {
   const spiders = [...new Set(configs.map(c => resolveSpider(c.spider || '', configSources[configs.indexOf(c)])).filter(Boolean))];
   const deadSpiders = new Set();
   const spiderClassMap = new Map(); // spider -> class names[]
+  const spiderDownloadInfo = new Map(); // spider -> download speed info
 
   for (const spider of spiders) {
     const url = spider.split(';')[0];
@@ -385,9 +386,14 @@ async function main() {
     if (!r.ok) {
       deadSpiders.add(spider);
     } else {
-      // 解析 spider 中的类名
-      const classes = await parseSpiderClasses(spider);
+      // 解析 spider 中的类名（同时测速）
+      const { classes, downloadInfo } = await parseSpiderClasses(spider);
       spiderClassMap.set(spider, classes);
+      if (downloadInfo) {
+        spiderDownloadInfo.set(spider, downloadInfo);
+        const sizeMB = (downloadInfo.fileSize / 1024 / 1024).toFixed(2);
+        console.log(`    → 下载: ${sizeMB}MB, 耗时 ${downloadInfo.downloadTime}ms, 速度 ${downloadInfo.speedKBs} KB/s`);
+      }
       console.log(`    → 解析到 ${classes.length} 个类: ${classes.slice(0, 5).join(', ')}${classes.length > 5 ? '...' : ''}`);
     }
   }
@@ -554,7 +560,7 @@ async function main() {
       return { name, url, ok };
     }),
     parses: Object.entries(parseResults).map(([k, ok]) => ({ name: k, ok })),
-    spiders: Object.fromEntries(spiders.map(s => [s, { alive: !deadSpiders.has(s), classes: spiderClassMap.get(s) || [] }]))
+    spiders: Object.fromEntries(spiders.map(s => [s, { alive: !deadSpiders.has(s), classes: spiderClassMap.get(s) || [], download: spiderDownloadInfo.get(s) || null }]))
   }, null, 2));
 
   console.log(`\n完成! alive.json: ${aliveSites.length} sites, ${aliveLives.length} lives, ${aliveParses.length} parses`);
