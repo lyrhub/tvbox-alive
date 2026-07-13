@@ -28,79 +28,84 @@ try { resultsData = JSON.parse(fs.readFileSync('results.json', 'utf-8')); } catc
 
 // 生成状态页面 (index.html)
 function generateStatusPage() {
-  const sites = resultsData?.sites || {};
-  const spiders = resultsData?.spiders || {};
-  const testedAt = resultsData?.tested_at || new Date().toISOString();
+  // results.json 现在是 TVBox 源格式，站点名称中含状态标记如 [✓ 123ms]
+  const allSites = resultsData?.sites || [];
+  const allLives = resultsData?.lives || [];
+  const allParses = resultsData?.parses || [];
+  const testedAt = new Date().toISOString();
 
-  const entries = Object.entries(sites);
-  const okCount = entries.filter(([, r]) => r.status === 'ok').length;
-  const failCount = entries.filter(([, r]) => r.status === 'fail').length;
-  const skipCount = entries.filter(([, r]) => r.status === 'skip').length;
-  const totalTested = entries.length;
+  // 从站点名称中解析状态
+  const parsedSites = allSites.map(site => {
+    const nameMatch = (site.name || '').match(/^\[(✓|✗|⊘|❓)\s*(\d+ms)?\]\s*(.*)$/);
+    let status = 'skip', latency = null, displayName = site.name || site.key || '';
+    if (nameMatch) {
+      const tag = nameMatch[1];
+      if (tag === '✓') status = 'ok';
+      else if (tag === '✗') status = 'fail';
+      else if (tag === '⊘') status = 'skip';
+      latency = nameMatch[2] ? parseInt(nameMatch[2]) : null;
+      displayName = nameMatch[3];
+    }
+    return { key: site.key || displayName, name: displayName, status, latency };
+  });
+
+  const okCount = parsedSites.filter(s => s.status === 'ok').length;
+  const failCount = parsedSites.filter(s => s.status === 'fail').length;
+  const skipCount = parsedSites.filter(s => s.status === 'skip').length;
+  const totalTested = parsedSites.length;
 
   const aliveSites = aliveData?.sites?.length || 0;
   const aliveLives = aliveData?.lives?.length || 0;
   const aliveParses = aliveData?.parses?.length || 0;
 
-  // Spider 状态
-  const spiderRows = Object.entries(spiders).map(([url, info]) => {
-    const name = url.split('/').pop().split(';')[0];
-    const isAlive = typeof info === 'object' ? info.alive : info;
-    const classCount = typeof info === 'object' ? (info.classes || []).length : 0;
-    const dot = isAlive ? 'dot-ok' : 'dot-fail';
-    const status = isAlive
-      ? `<span style="color:#3fb950">可用${classCount ? ' (' + classCount + '类)' : ''}</span>`
-      : '<span style="color:#f85149">不可用</span>';
-    return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">🕷 ${name}</td><td>Jar</td><td class="api-url" title="${url.split(';')[0]}">${url.split(';')[0]}</td><td>--</td><td>${status}</td></tr>`;
-  }).join('');
-
   // 直播源状态
-  const lives = aliveData?.lives || [];
-  const allLives = resultsData?.lives || [];
   const liveRows = allLives.map(l => {
-    const name = l.name || '未知';
+    const nameMatch = (l.name || '').match(/^\[(✓|✗)\]\s*(.*)$/);
+    const ok = nameMatch ? nameMatch[1] === '✓' : false;
+    const displayName = nameMatch ? nameMatch[2] : (l.name || '未知');
     const url = l.url || '';
-    const dot = l.ok ? 'dot-ok' : 'dot-fail';
-    const note = l.ok ? '<span style="color:#3fb950">可用</span>' : `<span class="error-text">不可用</span>`;
-    return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">📺 ${name}</td><td class="api-url" title="${url}">${url || '--'}</td><td>${note}</td></tr>`;
+    const dot = ok ? 'dot-ok' : 'dot-fail';
+    const note = ok ? '<span style="color:#3fb950">可用</span>' : '<span class="error-text">不可用</span>';
+    return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">📺 ${displayName}</td><td class="api-url" title="${url}">${url || '--'}</td><td>${note}</td></tr>`;
   }).join('');
 
   // 解析接口状态
-  const parses = aliveData?.parses || [];
-  const parseRows = parses.map(p => {
-    const name = p.name || p.url || '未知';
+  const parseRows = allParses.map(p => {
+    const nameMatch = (p.name || '').match(/^\[(✓|✗|❓)\]\s*(.*)$/);
+    const ok = nameMatch ? nameMatch[1] === '✓' : false;
+    const displayName = nameMatch ? nameMatch[2] : (p.name || p.url || '未知');
     const url = p.url || '';
-    return `<tr><td><span class="dot dot-ok"></span></td><td class="site-name">🔗 ${name}</td><td class="api-url" title="${url}">${url || '--'}</td><td><span style="color:#3fb950">可用</span></td></tr>`;
+    const dot = ok ? 'dot-ok' : 'dot-fail';
+    const note = ok ? '<span style="color:#3fb950">可用</span>' : '<span class="error-text">不可用</span>';
+    return `<tr><td><span class="dot ${dot}"></span></td><td class="site-name">🔗 ${displayName}</td><td class="api-url" title="${url}">${url || '--'}</td><td>${note}</td></tr>`;
   }).join('');
 
   // 站点状态（按状态排序）
-  const sorted = entries.sort((a, b) => {
-    if (a[1].status === 'ok' && b[1].status !== 'ok') return -1;
-    if (a[1].status !== 'ok' && b[1].status === 'ok') return 1;
-    if (a[1].status === 'skip') return 1;
-    if (b[1].status === 'skip') return -1;
-    return (a[1].latency || 99999) - (b[1].latency || 99999);
+  const sorted = parsedSites.sort((a, b) => {
+    if (a.status === 'ok' && b.status !== 'ok') return -1;
+    if (a.status !== 'ok' && b.status === 'ok') return 1;
+    if (a.status === 'skip') return 1;
+    if (b.status === 'skip') return -1;
+    return (a.latency || 99999) - (b.latency || 99999);
   });
 
-  const siteRows = sorted.map(([key, r]) => {
+  const siteRows = sorted.map(s => {
     let dotClass = 'dot-skip';
-    if (r.status === 'ok') dotClass = 'dot-ok';
-    else if (r.status === 'fail') dotClass = 'dot-fail';
+    if (s.status === 'ok') dotClass = 'dot-ok';
+    else if (s.status === 'fail') dotClass = 'dot-fail';
 
     let latencyHtml = '--';
-    if (r.latency != null) {
-      const cls = r.latency < 500 ? 'latency-fast' : r.latency < 2000 ? 'latency-mid' : 'latency-slow';
-      latencyHtml = `<span class="${cls}">${r.latency}ms</span>`;
+    if (s.latency != null) {
+      const cls = s.latency < 500 ? 'latency-fast' : s.latency < 2000 ? 'latency-mid' : 'latency-slow';
+      latencyHtml = `<span class="${cls}">${s.latency}ms</span>`;
     }
 
     let noteHtml = '';
-    if (r.status === 'ok') noteHtml = `<span style="color:#3fb950">HTTP ${r.http || 200}</span>`;
-    else if (r.status === 'skip') noteHtml = '<span class="skip-text">无可测试URL</span>';
-    else noteHtml = `<span class="error-text">${r.error || 'HTTP ' + r.http}</span>`;
+    if (s.status === 'ok') noteHtml = '<span style="color:#3fb950">可用</span>';
+    else if (s.status === 'skip') noteHtml = '<span class="skip-text">跳过</span>';
+    else noteHtml = '<span class="error-text">不可用</span>';
 
-    const testUrl = r.url || '';
-
-    return `<tr><td><span class="dot ${dotClass}"></span></td><td class="site-name">${key}</td><td>--</td><td class="api-url" title="${testUrl}">${testUrl || '--'}</td><td>${latencyHtml}</td><td>${noteHtml}</td></tr>`;
+    return `<tr><td><span class="dot ${dotClass}"></span></td><td class="site-name">${s.name}</td><td>--</td><td>--</td><td>${latencyHtml}</td><td>${noteHtml}</td></tr>`;
   }).join('');
 
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -148,7 +153,7 @@ tr:hover td{background:#1c2128}
   <a href="./alive.json">📋 存活配置 JSON</a>
   <a href="./results.json">📊 测试结果 JSON</a>
 </div>
-<div class="info-bar">⏱ 最后测试: ${new Date(testedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} | 每15分钟自动运行</div>
+<div class="info-bar">⏱ 最后测试: ${new Date(testedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} | 每6小时自动运行</div>
 <div class="summary">
   <div class="stat stat-total"><div class="stat-value">${totalTested}</div><div class="stat-label">总站点</div></div>
   <div class="stat stat-ok"><div class="stat-value">${okCount}</div><div class="stat-label">存活</div></div>
@@ -161,16 +166,13 @@ tr:hover td{background:#1c2128}
   <div class="stat"><div class="stat-value" style="color:#a371f7">${aliveParses}</div><div class="stat-label">解析接口</div></div>
 </div>
 
-${spiderRows ? `<h3 class="section-title">🕷 Spider 状态</h3>
-<table><thead><tr><th>状态</th><th>名称</th><th>类型</th><th>地址</th><th>延迟</th><th>备注</th></tr></thead><tbody>${spiderRows}</tbody></table>` : ''}
-
 <h3 class="section-title">🔍 站点测试详情</h3>
 <table><thead><tr><th>状态</th><th>站点</th><th>类型</th><th>测试地址</th><th>延迟</th><th>备注</th></tr></thead><tbody>${siteRows}</tbody></table>
 
-${liveRows ? `<h3 class="section-title">📺 直播源 (${lives.length} 个存活)</h3>
+${liveRows ? `<h3 class="section-title">📺 直播源</h3>
 <table><thead><tr><th>状态</th><th>名称</th><th>地址</th><th>备注</th></tr></thead><tbody>${liveRows}</tbody></table>` : ''}
 
-${parseRows ? `<h3 class="section-title">🔗 解析接口 (${parses.length} 个存活)</h3>
+${parseRows ? `<h3 class="section-title">🔗 解析接口</h3>
 <table><thead><tr><th>状态</th><th>名称</th><th>地址</th><th>备注</th></tr></thead><tbody>${parseRows}</tbody></table>` : ''}
 
 <div class="footer">TVBox Alive | GitHub Pages | 自动更新</div>

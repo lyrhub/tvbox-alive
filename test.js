@@ -555,19 +555,51 @@ async function main() {
   const output = { spider: bestSpider, sites: aliveSites, lives: aliveLives, parses: aliveParses };
 
   fs.writeFileSync('alive.json', JSON.stringify(output, null, 2));
-  fs.writeFileSync('results.json', JSON.stringify({
-    tested_at: new Date().toISOString(),
-    summary: { total: sites.length, tested, alive, resolved, skipped: sites.length - tested, incompatible: incompatibleCount },
-    sites: results,
-    lives: Object.entries(liveResults).map(([k, ok]) => {
-      const [name, url] = k.split('|');
-      return { name, url, ok };
-    }),
-    parses: Object.entries(parseResults).map(([k, ok]) => ({ name: k, ok })),
-    spiders: Object.fromEntries(spiders.map(s => [s, { alive: !deadSpiders.has(s), classes: spiderClassMap.get(s) || [] }]))
-  }, null, 2));
+
+  // results.json - TVBox 源格式，包含所有站点，名称中标注测试结果
+  const allSitesForResults = merged.sites.map(site => {
+    const key = site.key || site.name;
+    const { _baseUrl, _spider, _source, ...clean } = site;
+    // 转换相对路径
+    if (_baseUrl) {
+      if (clean.api && clean.api.startsWith('./')) clean.api = resolveUrl(clean.api, _baseUrl);
+      if (clean.ext && typeof clean.ext === 'string' && clean.ext.startsWith('./')) clean.ext = resolveUrl(clean.ext, _baseUrl);
+    }
+    // 在名称中标注测试状态
+    const r = results[key];
+    let statusTag = '❓';
+    if (r) {
+      if (r.status === 'ok') statusTag = '✓';
+      else if (r.status === 'fail') statusTag = '✗';
+      else if (r.status === 'skip') statusTag = '⊘';
+    }
+    const latencyTag = r && r.latency ? `${r.latency}ms` : '';
+    clean.name = `[${statusTag}${latencyTag ? ' ' + latencyTag : ''}] ${clean.name || key}`;
+    return clean;
+  });
+
+  const allLivesForResults = merged.lives.map(l => {
+    const k = `${l.name}|${l.url}`;
+    const { _baseUrl, ...clean } = l;
+    if (_baseUrl && clean.url && clean.url.startsWith('./')) {
+      clean.url = resolveUrl(clean.url, _baseUrl);
+    }
+    const ok = liveResults[k];
+    clean.name = `[${ok ? '✓' : '✗'}] ${clean.name || ''}`;
+    return clean;
+  });
+
+  const allParsesForResults = merged.parses.map(p => {
+    const k = p.name || p.url;
+    const ok = parseResults[k];
+    return { ...p, name: `[${ok ? '✓' : ok === false ? '✗' : '❓'}] ${p.name || ''}` };
+  });
+
+  const resultsOutput = { spider: bestSpider, sites: allSitesForResults, lives: allLivesForResults, parses: allParsesForResults };
+  fs.writeFileSync('results.json', JSON.stringify(resultsOutput, null, 2));
 
   console.log(`\n完成! alive.json: ${aliveSites.length} sites, ${aliveLives.length} lives, ${aliveParses.length} parses`);
+  console.log(`       results.json: ${allSitesForResults.length} sites (TVBox 格式，含状态标注)`);
   if (incompatibleCount > 0) console.log(`  (${incompatibleCount} 个站点因 spider 不兼容被排除)`);
 }
 
