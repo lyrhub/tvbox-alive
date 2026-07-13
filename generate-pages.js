@@ -21,12 +21,6 @@ if (fs.existsSync('results.json')) {
   fs.copyFileSync('results.json', path.join(OUTPUT_DIR, 'results.json'));
 }
 
-// 复制 spider.jar
-if (fs.existsSync('spider.jar')) {
-  fs.copyFileSync('spider.jar', path.join(OUTPUT_DIR, 'spider.jar'));
-  console.log('  spider.jar → output/spider.jar');
-}
-
 // 读取数据生成页面
 let aliveData = null, resultsData = null;
 try { aliveData = JSON.parse(fs.readFileSync('alive.json', 'utf-8')); } catch (e) {}

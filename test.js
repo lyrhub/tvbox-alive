@@ -372,15 +372,14 @@ async function main() {
   console.log(`\n合并完成: ${merged.sites.length} sites, ${merged.lives.length} lives, ${merged.parses.length} parses`);
 
   // 测试 Spider 并解析类名
-  console.log('\n测试 Spider 并下载...');
+  console.log('\n测试 Spider 并解析类名...');
   const spiders = [...new Set(configs.map(c => resolveSpider(c.spider || '', configSources[configs.indexOf(c)])).filter(Boolean))];
   const deadSpiders = new Set();
   const spiderClassMap = new Map(); // spider -> class names[]
-  let localSpiderFile = null; // 本地保存的 spider 文件名
 
   for (const spider of spiders) {
     const url = spider.split(';')[0];
-    const { classes, downloadInfo, buffer } = await parseSpiderClasses(spider);
+    const { classes, downloadInfo } = await parseSpiderClasses(spider);
     if (!downloadInfo) {
       console.log(`  ✗ ${url.substring(url.lastIndexOf('/') + 1)} (下载失败)`);
       deadSpiders.add(spider);
@@ -389,14 +388,6 @@ async function main() {
       console.log(`  ✓ ${url.substring(url.lastIndexOf('/') + 1)} (${sizeMB}MB, ${downloadInfo.downloadTime}ms)`);
       console.log(`    → 解析到 ${classes.length} 个类: ${classes.slice(0, 5).join(', ')}${classes.length > 5 ? '...' : ''}`);
       spiderClassMap.set(spider, classes);
-
-      // 保存类最多的 spider 到本地
-      if (!localSpiderFile || classes.length > (spiderClassMap.get(localSpiderFile.spider) || []).length) {
-        const fileName = 'spider.jar';
-        fs.writeFileSync(fileName, Buffer.from(buffer));
-        localSpiderFile = { fileName, spider };
-        console.log(`    → 已保存到本地: ${fileName}`);
-      }
     }
   }
 
@@ -550,12 +541,18 @@ async function main() {
     return false; // 未测试的也排除
   });
 
-  // 选择本地 spider URL
-  const PAGES_BASE = 'https://tv.eoty.cn';
-  const spiderUrl = localSpiderFile ? `${PAGES_BASE}/${localSpiderFile.fileName}` : SPIDER;
-  console.log(`\n输出 Spider: ${spiderUrl}`);
+  // 选择类最多的存活 spider（使用原始 URL）
+  let bestSpider = SPIDER;
+  let bestClassCount = 0;
+  for (const [spider, classes] of spiderClassMap) {
+    if (!deadSpiders.has(spider) && classes.length > bestClassCount) {
+      bestClassCount = classes.length;
+      bestSpider = spider;
+    }
+  }
+  console.log(`\n输出 Spider: ${bestSpider.split('/').pop().split(';')[0]} (${bestClassCount} 类)`);
 
-  const output = { spider: spiderUrl, sites: aliveSites, lives: aliveLives, parses: aliveParses };
+  const output = { spider: bestSpider, sites: aliveSites, lives: aliveLives, parses: aliveParses };
 
   fs.writeFileSync('alive.json', JSON.stringify(output, null, 2));
   fs.writeFileSync('results.json', JSON.stringify({
